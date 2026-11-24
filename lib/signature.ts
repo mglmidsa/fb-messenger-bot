@@ -11,3 +11,10 @@ export function verifySignature(rawBody: string, header: string | null, appSecre
   const expected = createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
   return timingSafeEqual(Buffer.from(received.toLowerCase(), "hex"), Buffer.from(expected, "hex"));
 }
+
+/** Constant-time string comparison for secrets (verify token, cron secret). */
+export function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
+}

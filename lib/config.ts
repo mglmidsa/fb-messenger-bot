@@ -10,9 +10,16 @@ const EnvSchema = z.object({
   GRAPH_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default("v26.0"),
   BOT_ENABLED: z.enum(["true", "false"]).default("true"),
   BUSINESS_KNOWLEDGE: z.string().optional(),
-  TELEGRAM_BOT_TOKEN: z.string().optional(),
-  TELEGRAM_CHAT_ID: z.string().optional(),
-  CRON_SECRET: z.string().optional(),
+  // Required: phone-number leads and handoffs are delivered ONLY through Telegram.
+  // Without it the bot would tell customers "staff will call you" while nobody is told.
+  TELEGRAM_BOT_TOKEN: z
+    .string()
+    .regex(/^\d+:[A-Za-z0-9_-]{20,}$/, "TELEGRAM_BOT_TOKEN is required (from @BotFather) — leads are sent there"),
+  TELEGRAM_CHAT_ID: z
+    .string()
+    .regex(/^(-?\d+|@\w{5,})$/, "TELEGRAM_CHAT_ID is required (numeric chat ID, or @channel)"),
+  // Required: protects the daily health check that alerts you when the Page token stops working.
+  CRON_SECRET: z.string().min(16, "CRON_SECRET: use a random string of 16+ chars"),
 });
 
 export type AppConfig = z.infer<typeof EnvSchema>;

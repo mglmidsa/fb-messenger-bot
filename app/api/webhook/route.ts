@@ -1,7 +1,6 @@
 import { after } from "next/server";
-import { timingSafeEqual } from "node:crypto";
 import { loadConfig } from "@/lib/config";
-import { verifySignature } from "@/lib/signature";
+import { safeEqual, verifySignature } from "@/lib/signature";
 import { parseMessages } from "@/lib/webhook";
 import { handleMessage } from "@/lib/bot";
 import { createRuntime } from "@/lib/runtime";
@@ -9,12 +8,6 @@ import { createRuntime } from "@/lib/runtime";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-
-function safeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
-}
 
 /** Meta calls this once when you register the webhook URL. */
 export async function GET(req: Request) {
