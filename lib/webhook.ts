@@ -9,6 +9,7 @@ export interface IncomingMessage {
 
 /**
  * Pulls the person-to-Page text/attachment messages out of a webhook body.
+ * A tap on a button ("Get Started" etc.) arrives as a postback and is treated as that button's text.
  * Ignores echoes (messages the Page itself sent), reads/deliveries, reactions and other pages' events.
  */
 export function parseMessages(body: unknown, pageId: string): IncomingMessage[] {
@@ -18,14 +19,23 @@ export function parseMessages(body: unknown, pageId: string): IncomingMessage[] 
   for (const entry of b.entry) {
     if (String(entry?.id) !== pageId || !Array.isArray(entry.messaging)) continue;
     for (const ev of entry.messaging) {
-      const msg = ev?.message;
-      if (!msg || msg.is_echo) continue;
       const psid = ev?.sender?.id;
-      if (!psid || String(psid) === pageId || !msg.mid) continue;
+      if (!psid || String(psid) === pageId) continue;
+      const timestamp = Number(ev.timestamp) || Date.now();
+
+      if (ev?.postback) {
+        const title = typeof ev.postback.title === "string" && ev.postback.title.trim() ? ev.postback.title.trim() : "Сайн байна уу";
+        const mid = String(ev.postback.mid ?? `pb_${psid}_${timestamp}`);
+        out.push({ psid: String(psid), mid, text: title, hasAttachment: false, timestamp });
+        continue;
+      }
+
+      const msg = ev?.message;
+      if (!msg || msg.is_echo || !msg.mid) continue;
       const text = typeof msg.text === "string" && msg.text.trim() ? msg.text.trim() : undefined;
       const hasAttachment = Array.isArray(msg.attachments) && msg.attachments.length > 0;
       if (!text && !hasAttachment) continue;
-      out.push({ psid: String(psid), mid: String(msg.mid), text, hasAttachment, timestamp: Number(ev.timestamp) || Date.now() });
+      out.push({ psid: String(psid), mid: String(msg.mid), text, hasAttachment, timestamp });
     }
   }
   return out;

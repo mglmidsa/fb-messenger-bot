@@ -3,22 +3,33 @@ import type { IncomingMessage } from "./webhook";
 import { knowledgeIsPlaceholder } from "./knowledge";
 import { extractPhone } from "./phone";
 import { redact } from "./graph";
+import { deliverLead, makeLead } from "./leads";
+import { findViolation } from "./safety";
+import { MemoryStore, type Lead, type LeadStore } from "./store";
 
-export const FALLBACK_REPLY =
-  "Сайн байна уу! Таны мессежийг хүлээн авлаа. Манай ажилтан тантай холбогдох тул утасны дугаараа үлдээнэ үү. 🙏";
-export const FALLBACK_WITH_PHONE_REPLY =
-  "Баярлалаа! Таны утасны дугаарыг хүлээн авлаа. Манай ажилтан удахгүй залгана. 🙏";
-export const ATTACHMENT_REPLY =
-  "Таны илгээсэн зураг/файлыг хүлээн авлаа. Ажилтан үзээд удахгүй хариулна. 🙏";
+export const PHONE_PURPOSE = "Таны дугаарыг зөвхөн тантай холбогдоход ашиглана.";
+export const FALLBACK_REPLY = `Сайн байна уу! Таны мессежийг хүлээн авлаа. Манай ажилтан тантай холбогдох тул утасны дугаараа үлдээнэ үү. ${PHONE_PURPOSE} 🙏`;
+export const FALLBACK_WITH_PHONE_REPLY = "Баярлалаа! Таны утасны дугаарыг хүлээн авлаа. Манай ажилтан удахгүй залгана. 🙏";
+export const SAFE_REDIRECT_REPLY = `Энэ талаар манай мэргэжилтэн утсаар дэлгэрэнгүй тайлбарлана. Утасны дугаараа үлдээвэл манай ажилтан тантай холбогдоно. ${PHONE_PURPOSE}`;
+export const ATTACHMENT_REPLY = "Таны илгээсэн зураг/файлыг хүлээн авлаа. Ажилтан үзээд удахгүй хариулна. 🙏";
+
+/** Inline Telegram attempts for a fresh lead (then the outbox takes over). Keeps the webhook under its time limit. */
+export const LEAD_RETRY_DELAYS_MS = [0, 3000, 10000];
 
 export interface BotDeps {
   enabled: boolean;
   knowledge: string;
+  store: LeadStore;
   sendText: (psid: string, text: string) => Promise<void>;
   senderAction: (psid: string, action: "typing_on" | "mark_seen") => Promise<void>;
   history: (psid: string) => Promise<ChatTurn[]>;
   decide: (knowledge: string, history: ChatTurn[], latest: string, phone: string | null) => Promise<BotDecision>;
+  /** Best-effort staff alert (not for leads). */
   notify: (text: string) => Promise<unknown>;
+  /** One Telegram attempt for a lead; true when accepted. */
+  sendLead: (text: string) => Promise<boolean>;
+  leadRetryDelaysMs?: number[];
+  sleep?: (ms: number) => Promise<void>;
   log?: (msg: string) => void;
 }
 
@@ -27,38 +38,37 @@ export type Outcome =
   | "disabled"
   | "ai_reply"
   | "lead"
+  | "lead_repeat"
   | "handoff"
   | "attachment"
   | "fallback"
   | "send_failed";
 
-/** Best-effort de-duplication of Meta webhook retries within one warm instance. */
-const seen = new Map<string, number>();
-const SEEN_TTL_MS = 10 * 60_000;
-export function isDuplicate(mid: string, now = Date.now()): boolean {
-  for (const [k, t] of seen) if (now - t > SEEN_TTL_MS) seen.delete(k);
-  if (seen.has(mid)) return true;
-  seen.set(mid, now);
-  return false;
-}
-export function _resetSeen() {
-  seen.clear();
+// Used only if Redis is unreachable, so the bot keeps working (with weaker de-duplication).
+const emergencyStore = new MemoryStore();
+export function _resetEmergencyStore() {
+  Object.assign(emergencyStore, new MemoryStore());
 }
 
-/** The Telegram message staff receive when a customer leaves a phone number. */
-export function leadMessage(phone: string, interest: string, preview: string, note?: string): string {
-  return [
-    "📞 Шинэ хүсэлт — тусгай зөвшөөрөл",
-    `Чиглэл: ${interest || "тодорхойгүй (утсаар тодруулна уу)"}`,
-    `Утас: ${phone}`,
-    `Хэрэглэгчийн мессеж: ${preview}`,
-    ...(note ? [`Тэмдэглэл: ${note}`] : []),
-  ].join("\n");
+/** The AI reply, unless it contains something the bot must never say (then a safe fixed reply). */
+export function safeReply(reply: string, phone: string | null, log: (m: string) => void = () => {}): string {
+  const violation = findViolation(reply, phone);
+  if (!violation) return reply;
+  log(`reply blocked (${violation})`);
+  return phone ? FALLBACK_WITH_PHONE_REPLY : SAFE_REDIRECT_REPLY;
 }
 
 export async function handleMessage(m: IncomingMessage, deps: BotDeps): Promise<Outcome> {
   const log = deps.log ?? (() => {});
-  if (isDuplicate(m.mid)) return "duplicate";
+
+  let firstTime: boolean;
+  try {
+    firstTime = await deps.store.claimMessage(m.mid);
+  } catch (e) {
+    log(`store unavailable for de-duplication: ${(e as Error).message}`);
+    firstTime = await emergencyStore.claimMessage(m.mid);
+  }
+  if (!firstTime) return "duplicate";
   if (!deps.enabled) return "disabled";
 
   const preview = (m.text ?? "[хавсралт]").slice(0, 300);
@@ -84,14 +94,35 @@ export async function handleMessage(m: IncomingMessage, deps: BotDeps): Promise<
   // Deterministic: a phone number is recognised by code, never by the AI.
   const phone = extractPhone(m.text);
 
+  // Persist the lead BEFORE calling the AI, so it survives a timeout or crash and the outbox retries it.
+  let lead: Lead | null = null;
+  let leadStore: LeadStore = deps.store;
+  let repeatNumber = false;
+  if (phone) {
+    const candidate = makeLead(m.psid, phone, preview);
+    try {
+      if (await deps.store.addLead(candidate)) lead = candidate;
+      else repeatNumber = true;
+    } catch (e) {
+      log(`store unavailable for lead: ${(e as Error).message}`);
+      leadStore = emergencyStore;
+      if (await emergencyStore.addLead(candidate)) lead = candidate;
+      else repeatNumber = true;
+    }
+  }
+
+  const announce = async (interest: string, note?: string) => {
+    if (!lead) return;
+    lead = { ...lead, interest, ...(note ? { note } : {}) };
+    await leadStore.updateLead(lead).catch(() => {});
+    await deliverLead(lead, { store: leadStore, send: deps.sendLead, sleep: deps.sleep, log }, deps.leadRetryDelaysMs ?? LEAD_RETRY_DELAYS_MS);
+  };
+
   if (knowledgeIsPlaceholder(deps.knowledge)) {
     const sent = await send(phone ? FALLBACK_WITH_PHONE_REPLY : FALLBACK_REPLY);
-    if (phone) {
-      await deps.notify(leadMessage(phone, "", preview, "Мэдлэгийн сан хоосон тул бот хариулаагүй"));
-    } else {
-      await deps.notify(`📨 Шинэ мессеж (мэдлэгийн сан хоосон тул бот хариулаагүй):\n${preview}`);
-    }
-    return sent ? (phone ? "lead" : "fallback") : "send_failed";
+    if (lead) await announce("", "Мэдлэгийн сан хоосон тул бот хариулаагүй");
+    else if (!phone) await deps.notify(`📨 Шинэ мессеж (мэдлэгийн сан хоосон тул бот хариулаагүй):\n${preview}`);
+    return !sent ? "send_failed" : lead ? "lead" : repeatNumber ? "lead_repeat" : "fallback";
   }
 
   await deps.senderAction(m.psid, "typing_on").catch(() => {});
@@ -112,22 +143,16 @@ export async function handleMessage(m: IncomingMessage, deps: BotDeps): Promise<
     const err = redact((e as Error).message).slice(0, 300);
     log(`AI failed: ${err}`);
     const sent = await send(phone ? FALLBACK_WITH_PHONE_REPLY : FALLBACK_REPLY);
-    if (phone) {
-      // The lead must reach staff even when the AI is down.
-      await deps.notify(leadMessage(phone, "", preview, `AI алдаа гарсан (${err})`));
-    } else {
-      await deps.notify(`⚠️ AI хариулт гаргаж чадсангүй, ажилтан хариулна уу.\nМессеж: ${preview}\nАлдаа: ${err}`);
-    }
+    if (lead) await announce("", `AI алдаа гарсан (${err})`);
+    else if (!phone) await deps.notify(`⚠️ AI хариулт гаргаж чадсангүй, ажилтан хариулна уу.\nМессеж: ${preview}\nАлдаа: ${err}`);
     return sent ? "fallback" : "send_failed";
   }
 
-  const sent = await send(decision.reply);
+  const sent = await send(safeReply(decision.reply, phone, log));
 
-  // Notify staff even if the Messenger reply failed: the lead is the important part.
-  if (phone) {
-    await deps.notify(
-      leadMessage(phone, decision.licenseInterest, preview, decision.needsHuman ? decision.reason || "ажилтны анхаарал хэрэгтэй" : undefined),
-    );
+  // The lead goes to staff even if the Messenger reply failed: the phone number is the important part.
+  if (lead) {
+    await announce(decision.licenseInterest, decision.needsHuman ? decision.reason || "ажилтны анхаарал хэрэгтэй" : undefined);
     return sent ? "lead" : "send_failed";
   }
   if (decision.needsHuman) {
@@ -136,5 +161,6 @@ export async function handleMessage(m: IncomingMessage, deps: BotDeps): Promise<
     );
     return sent ? "handoff" : "send_failed";
   }
+  if (repeatNumber) return sent ? "lead_repeat" : "send_failed";
   return sent ? "ai_reply" : "send_failed";
 }
