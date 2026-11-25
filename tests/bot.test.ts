@@ -15,7 +15,7 @@ import {
 import { splitMessage, Messenger } from "@/lib/messenger";
 import { decideReply, buildUserContent, buildSystemPrompt } from "@/lib/ai";
 import { GraphClient, redact, GraphError } from "@/lib/graph";
-import { loadConfig, loadVerifyToken } from "@/lib/config";
+import { configReport, loadConfig, loadVerifyToken } from "@/lib/config";
 import { extractPhone } from "@/lib/phone";
 import { notifyOwner } from "@/lib/notify";
 import { DEFAULT_KNOWLEDGE, knowledgeIsPlaceholder } from "@/lib/knowledge";
@@ -514,6 +514,14 @@ describe("config + redact", () => {
   it("lets webhook verification work with only the verify token set", () => {
     expect(loadVerifyToken({ WEBHOOK_VERIFY_TOKEN: "v".repeat(20) })).toBe("v".repeat(20));
     expect(() => loadVerifyToken({})).toThrow(/WEBHOOK_VERIFY_TOKEN/);
+  });
+  it("reports missing configuration by name only, never by value", () => {
+    const r = configReport({ ANTHROPIC_API_KEY: "sk-secret-value-000000000000", TELEGRAM_BOT_TOKEN: "123:" + "B".repeat(30) });
+    expect(r.valid).toBe(false);
+    expect(r.redisConnected).toBe(false);
+    expect(r.missing).toEqual(["PAGE_ID", "PAGE_ACCESS_TOKEN", "META_APP_SECRET", "WEBHOOK_VERIFY_TOKEN", "TELEGRAM_CHAT_ID", "CRON_SECRET"]);
+    expect(JSON.stringify(r)).not.toContain("sk-secret-value");
+    expect(configReport(ENV)).toEqual({ missing: [], redisConnected: true, valid: true, problems: [] });
   });
   it("compares secrets in constant time", () => {
     expect(safeEqual("Bearer abc", "Bearer abc")).toBe(true);

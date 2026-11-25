@@ -79,3 +79,39 @@ export function loadAdminConfig(env: Env = process.env) {
     env,
   );
 }
+
+const REQUIRED_KEYS = [
+  "PAGE_ID",
+  "PAGE_ACCESS_TOKEN",
+  "META_APP_SECRET",
+  "WEBHOOK_VERIFY_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "TELEGRAM_BOT_TOKEN",
+  "TELEGRAM_CHAT_ID",
+  "CRON_SECRET",
+] as const;
+
+export interface ConfigReport {
+  /** Required variables that are not set at all. */
+  missing: string[];
+  redisConnected: boolean;
+  /** True when the full configuration validates (the bot can handle messages). */
+  valid: boolean;
+  /** Validation messages; they name variables but never contain their values. */
+  problems: string[];
+}
+
+/** Which configuration is present, without revealing any value. Used by /api/setup/status. */
+export function configReport(env: Env = process.env): ConfigReport {
+  const missing = REQUIRED_KEYS.filter((k) => !env[k]?.trim());
+  const redisConnected = Boolean(
+    (env.UPSTASH_REDIS_REST_URL || env.KV_REST_API_URL) && (env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN),
+  );
+  try {
+    loadConfig(env, false);
+    return { missing, redisConnected, valid: true, problems: [] };
+  } catch (e) {
+    const problems = (e as Error).message.replace(/^Invalid configuration — /, "").split("; ");
+    return { missing, redisConnected, valid: false, problems };
+  }
+}
