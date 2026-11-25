@@ -48,6 +48,7 @@ Vercel Cron (өдөр бүр 09:00 УБ) → /api/health → token, webhook, Tel
 | `/api/webhook` | Meta webhook (Callback URL) |
 | `/privacy` | Нууцлалын бодлого. Meta аппын Privacy Policy URL. `/privacy#delete` нь мэдээлэл устгах заавар. |
 | `/api/health` | Шалгалт. `Authorization: Bearer <CRON_SECRET>` шаардана. |
+| `/api/setup/status` | Дутуу environment variable-уудын нэр (утгыг биш), Redis холбогдсон эсэх, ажиллаж буй commit. `CRON_SECRET` шаардана. |
 | `/api/setup/telegram` | Ботын харсан Telegram чатуудыг жагсаана (`TELEGRAM_CHAT_ID` олоход). `CRON_SECRET` шаардана. |
 | `/api/admin/selftest` | Redis болон Telegram-ыг production дээр шалгана. `CRON_SECRET` болон `ADMIN_TOOLS=true` шаардана. |
 | `/api/admin/simulate` | Монгол хэлний тест: бодит prompt болон загвараар хариулт гаргана, юу ч илгээхгүй. `CRON_SECRET` болон `ADMIN_TOOLS=true` шаардана. |

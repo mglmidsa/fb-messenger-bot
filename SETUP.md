@@ -6,6 +6,7 @@
 ## 1. Vercel project (2 минут)
 1. vercel.com/new → **Import Git Repository** → `mglmidsa/fb-messenger-bot`. Vercel GitHub-д хандах эрх асуувал энэ repo-г зөвшөөрнө.
 2. Team: **Midas** → **Deploy**. Нууц утгагүйгээр ч build амжилттай болно.
+   - **«No Production Deployment» эсвэл «Blocked» гарвал:** Vercel Hobby нь private repo дээр зохиогч нь project эзэмшигч биш commit-ийн deploy-г хаадаг. Энэ repo-ийн commit-уудын зохиогч `claude` байдаг. Шийдэл: **Deployments → Create Deployment** (эсвэл project-ийн ⋯ цэс) → Branch/Commit: `main` → **Create Deployment**. Таны өөрийн эхлүүлсэн deploy хаагдахгүй. Claude код өөрчлөх бүрд энэ алхмыг давтана.
 3. Project → **Domains** хэсгээс production хаягийг хуулж авна, жишээ нь `https://fb-messenger-bot.vercel.app`. Цаашид үүнийг `<ДОМЭЙН>` гэж бичнэ.
 
 ## 2. Redis (1 минут)
