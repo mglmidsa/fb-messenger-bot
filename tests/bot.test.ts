@@ -15,7 +15,7 @@ import {
 import { splitMessage, Messenger } from "@/lib/messenger";
 import { decideReply, buildUserContent, buildSystemPrompt } from "@/lib/ai";
 import { GraphClient, redact, GraphError } from "@/lib/graph";
-import { configReport, loadConfig, loadVerifyToken } from "@/lib/config";
+import { cleanEnv, configReport, loadConfig, loadVerifyToken } from "@/lib/config";
 import { extractPhone } from "@/lib/phone";
 import { notifyOwner } from "@/lib/notify";
 import { DEFAULT_KNOWLEDGE, knowledgeIsPlaceholder } from "@/lib/knowledge";
@@ -530,5 +530,47 @@ describe("config + redact", () => {
   });
   it("redacts tokens", () => {
     expect(redact("token EAAB1234567890abcdef and access_token=abc&x=1")).toBe("token EAA*** and access_token=***&x=1");
+  });
+});
+
+describe("webhook verification (GET /api/webhook)", () => {
+  const call = async (env: Record<string, string | undefined>, qs: string) => {
+    const saved = { ...process.env };
+    for (const k of ["WEBHOOK_VERIFY_TOKEN", "PAGE_ACCESS_TOKEN", "META_APP_SECRET", "CRON_SECRET"]) delete process.env[k];
+    Object.assign(process.env, env);
+    try {
+      const { GET } = await import("@/app/api/webhook/route");
+      const res = await GET(new Request(`https://bot.example/api/webhook?${qs}`));
+      return { status: res.status, type: res.headers.get("content-type"), body: await res.text() };
+    } finally {
+      process.env = saved;
+    }
+  };
+  const TOKEN = "c".repeat(24);
+  const meta = (t: string) => `hub.mode=subscribe&hub.challenge=1158201444&hub.verify_token=${encodeURIComponent(t)}`;
+
+  it("returns the challenge as plain text with only WEBHOOK_VERIFY_TOKEN set (no Page token, no app secret)", async () => {
+    const r = await call({ WEBHOOK_VERIFY_TOKEN: TOKEN }, meta(TOKEN));
+    expect(r).toMatchObject({ status: 200, body: "1158201444" });
+    expect(r.type).toContain("text/plain");
+  });
+  it("tolerates a stray space or newline pasted into the Vercel value", async () => {
+    expect((await call({ WEBHOOK_VERIFY_TOKEN: `  ${TOKEN}\n` }, meta(TOKEN))).status).toBe(200);
+  });
+  it("rejects a wrong token or wrong mode with 403", async () => {
+    expect((await call({ WEBHOOK_VERIFY_TOKEN: TOKEN }, meta("wrong-token"))).status).toBe(403);
+    expect((await call({ WEBHOOK_VERIFY_TOKEN: TOKEN }, meta(TOKEN).replace("subscribe", "other"))).status).toBe(403);
+  });
+  it("says clearly (503) when the deployment has no WEBHOOK_VERIFY_TOKEN, without leaking anything", async () => {
+    const r = await call({}, meta(TOKEN));
+    expect(r.status).toBe(503);
+    expect(r.body).toContain("WEBHOOK_VERIFY_TOKEN is not set");
+    expect(r.body).not.toContain(TOKEN);
+  });
+});
+
+describe("cleanEnv", () => {
+  it("trims values, drops empty ones and lower-cases true/false flags", () => {
+    expect(cleanEnv({ A: "  x \n", B: "   ", ADMIN_TOOLS: "TRUE ", BOT_ENABLED: "False" })).toEqual({ A: "x", ADMIN_TOOLS: "true", BOT_ENABLED: "false" });
   });
 });

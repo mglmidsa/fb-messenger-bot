@@ -2,8 +2,23 @@ import { z } from "zod";
 
 type Env = Record<string, string | undefined>;
 
+const LOWERCASE_KEYS = new Set(["ADMIN_TOOLS", "BOT_ENABLED"]);
+
+/**
+ * Values pasted into the Vercel dashboard often carry a stray space or newline; trim them so a
+ * correct secret is not rejected. Empty values count as not set. true/false flags ignore case.
+ */
+export function cleanEnv(env: Env): Env {
+  const out: Env = {};
+  for (const [k, v] of Object.entries(env)) {
+    const t = typeof v === "string" ? v.trim() : undefined;
+    if (t) out[k] = LOWERCASE_KEYS.has(k) ? t.toLowerCase() : t;
+  }
+  return out;
+}
+
 function parse<T extends z.ZodType>(schema: T, env: Env): z.infer<T> {
-  const res = schema.safeParse(env);
+  const res = schema.safeParse(cleanEnv(env));
   if (!res.success) {
     const msg = res.error.issues.map((i) => `${i.path.join(".") || "env"}: ${i.message}`).join("; ");
     throw new Error(`Invalid configuration — ${msg}`);
