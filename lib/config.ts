@@ -35,7 +35,7 @@ const EnvSchema = z
     META_APP_SECRET: z.string().min(16, "META_APP_SECRET is required to verify webhook signatures"),
     WEBHOOK_VERIFY_TOKEN: secret16("WEBHOOK_VERIFY_TOKEN"),
     ANTHROPIC_API_KEY: z.string().min(20),
-    CLAUDE_MODEL: z.string().default("claude-haiku-5-5"),
+    CLAUDE_MODEL: z.string().default("claude-sonnet-5-5"),
     GRAPH_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default("v26.0"),
     BOT_ENABLED: z.enum(["true", "false"]).default("true"),
     BUSINESS_KNOWLEDGE: z.string().optional(),

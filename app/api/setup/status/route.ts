@@ -14,7 +14,7 @@ export async function GET(req: Request) {
   return Response.json({
     ...configReport(),
     adminTools: process.env.ADMIN_TOOLS === "true",
-    model: process.env.CLAUDE_MODEL || "claude-haiku-5-5 (default)",
+    model: process.env.CLAUDE_MODEL || "claude-sonnet-5-5 (default)",
     commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
     environment: process.env.VERCEL_ENV ?? null,
   });

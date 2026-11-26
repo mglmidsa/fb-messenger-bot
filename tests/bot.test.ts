@@ -507,7 +507,7 @@ describe("config + redact", () => {
   };
   it("applies defaults", () => {
     const c = loadConfig(ENV, false);
-    expect(c.CLAUDE_MODEL).toBe("claude-haiku-5-5");
+    expect(c.CLAUDE_MODEL).toBe("claude-sonnet-5-5");
     expect(c.BOT_ENABLED).toBe("true");
   });
   it("requires Telegram (leads go there) and the cron secret", () => {
