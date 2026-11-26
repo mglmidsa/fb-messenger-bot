@@ -16,6 +16,12 @@ export class GraphError extends Error {
   get isAuthError(): boolean {
     return this.code === 190 || this.code === 102 || this.status === 401;
   }
+
+  /** The token works but lacks a permission this particular call needs (not a broken token). */
+  get isPermissionError(): boolean {
+    const c = this.code ?? 0;
+    return c === 10 || (c >= 200 && c < 300) || (c === 100 && /permission|feature/i.test(this.message));
+  }
 }
 
 type Params = Record<string, string | number | boolean | undefined>;

@@ -5,13 +5,16 @@ import { createRuntime } from "@/lib/runtime";
 import { extractPhone } from "@/lib/phone";
 import { findViolation } from "@/lib/safety";
 import { safeReply } from "@/lib/bot";
-import type { ChatTurn } from "@/lib/ai";
+import { decideReply, type ChatTurn } from "@/lib/ai";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const Body = z.object({
+  // Admin comparison only; production replies always use CLAUDE_MODEL.
+  model: z.enum(["claude-haiku-5-5", "claude-sonnet-5-5"]).optional(),
+  effort: z.enum(["low", "medium", "high"]).optional(),
   conversations: z
     .array(z.object({ name: z.string().max(80), turns: z.array(z.string().min(1).max(500)).min(1).max(6) }))
     .min(1)
@@ -28,7 +31,10 @@ export async function POST(req: Request) {
   if (denied) return denied;
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: parsed.error.issues }, { status: 400 });
-  const { knowledge, decide, cfg } = createRuntime(loadConfig());
+  const { knowledge, cfg, claude } = createRuntime(loadConfig());
+  const model = parsed.data.model ?? cfg.CLAUDE_MODEL;
+  const decide = (k: string, h: ChatTurn[], latest: string, phone: string | null) =>
+    decideReply(claude, { model, effort: parsed.data.effort }, k, h, latest, phone);
 
   const runOne = async (conv: { name: string; turns: string[] }) => {
     const history: ChatTurn[] = [];
@@ -64,5 +70,5 @@ export async function POST(req: Request) {
       for (let c = queue.shift(); c; c = queue.shift()) results.push(await runOne(c));
     }),
   );
-  return Response.json({ model: cfg.CLAUDE_MODEL, results });
+  return Response.json({ model, effort: parsed.data.effort ?? "low", results });
 }

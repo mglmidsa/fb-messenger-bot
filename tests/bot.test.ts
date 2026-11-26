@@ -385,6 +385,12 @@ describe("Graph + Messenger", () => {
     const err: any = await bad.get("me", "t").catch((e) => e);
     expect(err).toBeInstanceOf(GraphError);
     expect(err.isAuthError).toBe(true);
+    // A missing permission for one call is not a broken token (no false health alarms).
+    const perm = new GraphError("(#100) requires the 'pages_read_engagement' permission", 400, 100);
+    expect(perm.isPermissionError).toBe(true);
+    expect(perm.isAuthError).toBe(false);
+    expect(new GraphError("(#200) Requires pages_manage_metadata permission", 403, 200).isPermissionError).toBe(true);
+    expect(new GraphError("Session has expired", 400, 190).isPermissionError).toBe(false);
   });
 
   it("maps conversation history oldest-first with roles", async () => {
@@ -439,6 +445,8 @@ describe("Claude call", () => {
     expect(b.output_config.format.type).toBe("json_schema");
     expect(Object.keys(b.output_config.format.schema.properties).sort()).toEqual(["license_interest", "needs_human", "reason", "reply"]);
     expect(b.output_config.effort).toBe("low");
+    await decideReply(client, { model: "claude-haiku-5-5", effort: "medium" }, KNOWLEDGE, [], "сайн уу", null);
+    expect(bodies[1].output_config.effort).toBe("medium");
     expect(b.max_tokens).toBeGreaterThanOrEqual(1000);
     expect(b.system).toContain("Тест зөвшөөрлийн зөвлөх");
     expect(b.messages[0].content).toContain("<phone_check>");
@@ -464,6 +472,8 @@ describe("Claude call", () => {
     expect(sys).toContain("Энэ дүрмүүд бүх ярианы турш хүчинтэй");
     expect(sys).toContain("зөвхөн манай ажилтан тантай холбогдоход ашиглана"); // consent purpose
     expect(sys).toContain("латин үсгээр");
+    expect(sys).toContain('"shudnii emneleg" = шүдний эмнэлэг');
+    expect(sys).toContain('буруу: "таньд", "таньтай"');
     expect(sys).toContain("кирилл үсгээр");
   });
 });

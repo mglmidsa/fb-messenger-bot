@@ -31,5 +31,5 @@ export function createRuntime(cfg: AppConfig = loadConfig()) {
     sendLead,
     log,
   };
-  return { cfg, graph, messenger, store, deps, notify, sendLead, log, knowledge, decide };
+  return { cfg, graph, messenger, store, deps, notify, sendLead, log, knowledge, decide, claude };
 }

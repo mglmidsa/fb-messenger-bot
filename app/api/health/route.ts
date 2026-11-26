@@ -1,6 +1,6 @@
 import { loadConfig } from "@/lib/config";
 import { createRuntime } from "@/lib/runtime";
-import { redact } from "@/lib/graph";
+import { GraphError, redact } from "@/lib/graph";
 import { getKnowledge, knowledgeIsPlaceholder } from "@/lib/knowledge";
 import { safeEqual } from "@/lib/signature";
 import { telegramReachable } from "@/lib/notify";
@@ -21,26 +21,48 @@ export async function GET(req: Request) {
   }
   const { graph, notify, store, sendLead, log } = createRuntime(cfg);
   const problems: string[] = [];
-  const checks: Record<string, boolean> = {};
+  const notes: string[] = [];
+  // true = verified OK, false = verified broken, null = this token cannot verify it (not an error).
+  const checks: Record<string, boolean | null> = {};
 
-  try {
-    const me: any = await graph.get("me", cfg.PAGE_ACCESS_TOKEN, { fields: "id,name" });
-    checks.pageToken = String(me?.id) === cfg.PAGE_ID;
-    if (!checks.pageToken) problems.push(`Token нь өөр пэйжийнх байна (${me?.id})`);
-  } catch (e) {
-    checks.pageToken = false;
-    problems.push(`Page token ажиллахгүй байна: ${redact((e as Error).message)}`);
-  }
+  /** Only a definite failure becomes a problem; a missing permission for a diagnostic call is just a note. */
+  const graphCheck = async (name: string, run: () => Promise<boolean>, failText: string, permText: string) => {
+    try {
+      checks[name] = await run();
+      if (!checks[name]) problems.push(failText);
+    } catch (e) {
+      if (e instanceof GraphError && e.isPermissionError && !e.isAuthError) {
+        checks[name] = null;
+        notes.push(permText);
+      } else {
+        checks[name] = false;
+        const why = e instanceof GraphError && e.isAuthError ? "token хүчингүй эсвэл хугацаа нь дууссан" : redact((e as Error).message);
+        problems.push(`${failText}: ${why}`);
+      }
+    }
+  };
 
-  try {
-    const subs: any = await graph.get(`${cfg.PAGE_ID}/subscribed_apps`, cfg.PAGE_ACCESS_TOKEN);
-    const fields: string[] = (subs?.data ?? []).flatMap((a: any) => a?.subscribed_fields ?? []);
-    checks.webhookSubscribed = fields.includes("messages");
-    if (!checks.webhookSubscribed) problems.push("Пэйж 'messages' webhook-д бүртгэлгүй байна");
-  } catch (e) {
-    checks.webhookSubscribed = false;
-    problems.push(`Webhook бүртгэлийг шалгаж чадсангүй: ${redact((e as Error).message)}`);
-  }
+  // Needs only pages_messaging — the permission the bot actually uses to reply.
+  await graphCheck(
+    "pageToken",
+    async () => {
+      await graph.get(`${cfg.PAGE_ID}/messaging_feature_review`, cfg.PAGE_ACCESS_TOKEN);
+      return true;
+    },
+    "Page token ажиллахгүй байна",
+    "Page token-ийг энэ аргаар шалгах эрх алга (pages_messaging). Бодит мессежээр шалгана.",
+  );
+
+  await graphCheck(
+    "webhookSubscribed",
+    async () => {
+      const subs: any = await graph.get(`${cfg.PAGE_ID}/subscribed_apps`, cfg.PAGE_ACCESS_TOKEN);
+      const fields: string[] = (subs?.data ?? []).flatMap((a: any) => a?.subscribed_fields ?? []);
+      return fields.includes("messages");
+    },
+    "Пэйж 'messages' webhook-д бүртгэлгүй байна",
+    "Webhook бүртгэлийг энэ token-оор шалгах эрх алга (pages_manage_metadata). Бодит мессеж ирж байгаа нь бүртгэлтэйг харуулна.",
+  );
 
   checks.botEnabled = cfg.BOT_ENABLED === "true";
   if (!checks.botEnabled) problems.push("BOT_ENABLED=false — бот унтраастай байна");
@@ -72,5 +94,5 @@ export async function GET(req: Request) {
   if (problems.length && checks.telegram) {
     await notify(`🚨 Messenger ботын шалгалт:\n- ${problems.join("\n- ")}`);
   }
-  return Response.json({ ok: problems.length === 0, checks, outbox, problems });
+  return Response.json({ ok: problems.length === 0, checks, outbox, problems, notes });
 }
