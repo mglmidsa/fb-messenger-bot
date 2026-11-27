@@ -584,3 +584,27 @@ describe("cleanEnv", () => {
     expect(cleanEnv({ A: "  x \n", B: "   ", ADMIN_TOOLS: "TRUE ", BOT_ENABLED: "False" })).toEqual({ A: "x", ADMIN_TOOLS: "true", BOT_ENABLED: "false" });
   });
 });
+
+describe("diagnostics (no personal data)", () => {
+  it("counts which kind of events a webhook delivery carried", async () => {
+    const { entryKinds } = await import("@/lib/webhook");
+    expect(entryKinds({ object: "page", entry: [{ id: "1", messaging: [{}, {}] }, { id: "1", standby: [{}] }, { id: "1", changes: [] }] })).toEqual({ messaging: 2, standby: 1, other: 1 });
+    expect(entryKinds(null)).toEqual({ messaging: 0, standby: 0, other: 0 });
+  });
+  it("keeps counters and timestamps only", async () => {
+    const s = new MemoryStore();
+    await s.track({ webhook_posts: 1, outcome_lead: 1 }, { webhook_last_at: "t1" });
+    await s.track({ webhook_posts: 2 });
+    expect(await s.activity()).toEqual({ webhook_posts: "3", outcome_lead: "1", webhook_last_at: "t1" });
+  });
+  it("reports send and AI failures to the diagnosis hook, tokens redacted", async () => {
+    const errors: string[] = [];
+    const d1 = makeDeps({ onError: (k, m) => errors.push(`${k}:${m}`), sendText: async () => { throw new Error("(#10) blocked access_token=EAAabcdefghijklmnop"); } });
+    await handleMessage(msg(), d1);
+    const d2 = makeDeps({ onError: (k, m) => errors.push(`${k}:${m}`), decide: async () => { throw new Error("overloaded"); } });
+    await handleMessage(msg(), d2);
+    expect(errors[0]).toMatch(/^send:\(#10\) blocked/);
+    expect(errors.join(" ")).not.toContain("EAAabcdefghijklmnop");
+    expect(errors).toContain("ai:overloaded");
+  });
+});

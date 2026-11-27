@@ -36,12 +36,16 @@ export interface LeadStore {
   markDelivered(id: string): Promise<void>;
   stats(): Promise<OutboxStats>;
   ping(): Promise<boolean>;
+  /** Privacy-safe activity counters for diagnosis: counts and timestamps only — no text, ids or phone numbers. */
+  track(incr: Record<string, number>, set?: Record<string, string>): Promise<void>;
+  activity(): Promise<Record<string, string>>;
 }
 
 /** Keep phone numbers no longer than needed; also the de-duplication window for the same customer + number. */
 export const LEAD_TTL_SECONDS = 30 * 24 * 3600;
 const MESSAGE_TTL_SECONDS = 2 * 24 * 3600;
 const OUTBOX = "outbox";
+const ACTIVITY = "activity";
 
 // Atomic: mark this customer+number as seen AND enqueue the lead, or do nothing if already seen.
 const ADD_LEAD_SCRIPT = `
@@ -118,6 +122,18 @@ export class RedisStore implements LeadStore {
   async ping(): Promise<boolean> {
     return (await this.redis.ping()) === "PONG";
   }
+
+  async track(incr: Record<string, number>, set: Record<string, string> = {}): Promise<void> {
+    const p = this.redis.pipeline();
+    for (const [k, n] of Object.entries(incr)) p.hincrby(ACTIVITY, k, n);
+    if (Object.keys(set).length) p.hset(ACTIVITY, set);
+    await p.exec();
+  }
+
+  async activity(): Promise<Record<string, string>> {
+    const all = await this.redis.hgetall<Record<string, string | number>>(ACTIVITY);
+    return Object.fromEntries(Object.entries(all ?? {}).map(([k, v]) => [k, String(v)]));
+  }
 }
 
 /** In-process store: used by tests and as the emergency fallback if Redis is unreachable. */
@@ -164,5 +180,13 @@ export class MemoryStore implements LeadStore {
   }
   async ping(): Promise<boolean> {
     return true;
+  }
+  private counters = new Map<string, string>();
+  async track(incr: Record<string, number>, set: Record<string, string> = {}): Promise<void> {
+    for (const [k, n] of Object.entries(incr)) this.counters.set(k, String(Number(this.counters.get(k) ?? 0) + n));
+    for (const [k, v] of Object.entries(set)) this.counters.set(k, v);
+  }
+  async activity(): Promise<Record<string, string>> {
+    return Object.fromEntries(this.counters);
   }
 }

@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { loadConfig, loadVerifyToken } from "@/lib/config";
 import { safeEqual, verifySignature } from "@/lib/signature";
-import { parseMessages } from "@/lib/webhook";
+import { entryKinds, parseMessages } from "@/lib/webhook";
 import { handleMessage } from "@/lib/bot";
 import { createRuntime } from "@/lib/runtime";
 import { flushOutbox } from "@/lib/leads";
@@ -44,8 +44,12 @@ export async function GET(req: Request) {
 /** Every incoming Messenger event. Answer 200 fast; do the AI work after the response. */
 export async function POST(req: Request) {
   const cfg = loadConfig();
+  const rt = createRuntime(cfg);
+  const now = () => new Date().toISOString();
   const raw = await req.text();
   if (!verifySignature(raw, req.headers.get("x-hub-signature-256"), cfg.META_APP_SECRET)) {
+    // A wrong META_APP_SECRET shows up here as a growing count in /api/setup/status.
+    await rt.store.track({ webhook_bad_signature: 1 }, { webhook_bad_signature_last_at: now() }).catch(() => {});
     return new Response("Invalid signature", { status: 401 });
   }
   let body: unknown;
@@ -55,14 +59,22 @@ export async function POST(req: Request) {
     return new Response("Bad JSON", { status: 400 });
   }
   const messages = parseMessages(body, cfg.PAGE_ID);
-  const rt = createRuntime(cfg);
+  const kinds = entryKinds(body);
   after(async () => {
+    await rt.store
+      .track(
+        { webhook_posts: 1, entries_messaging: kinds.messaging, entries_standby: kinds.standby, entries_other: kinds.other, messages_parsed: messages.length },
+        { webhook_last_at: now(), ...(kinds.standby ? { standby_last_at: now() } : {}) },
+      )
+      .catch(() => {});
     for (const m of messages) {
       try {
         const outcome = await handleMessage(m, rt.deps);
         rt.log(`${m.mid.slice(-8)} → ${outcome}`);
+        await rt.store.track({ [`outcome_${outcome}`]: 1 }, { last_message_at: now() }).catch(() => {});
       } catch (e) {
         console.error(`[bot] unexpected error`, (e as Error).message);
+        await rt.store.track({ error_unexpected: 1 }, { last_error: `unexpected: ${(e as Error).message}`.slice(0, 240), last_error_at: now() }).catch(() => {});
       }
     }
     // Any lead that Telegram refused earlier gets another chance on every webhook call.

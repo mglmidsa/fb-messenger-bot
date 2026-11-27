@@ -40,3 +40,19 @@ export function parseMessages(body: unknown, pageId: string): IncomingMessage[] 
   }
   return out;
 }
+
+/**
+ * What kind of events a webhook delivery carried, for diagnosis. "standby" means another app
+ * currently owns the conversation (Page conversation routing), so the bot is not expected to answer.
+ */
+export function entryKinds(body: unknown): { messaging: number; standby: number; other: number } {
+  const out = { messaging: 0, standby: 0, other: 0 };
+  const b = body as any;
+  if (!b || !Array.isArray(b.entry)) return out;
+  for (const e of b.entry) {
+    if (Array.isArray(e?.messaging)) out.messaging += e.messaging.length;
+    else if (Array.isArray(e?.standby)) out.standby += e.standby.length;
+    else out.other += 1;
+  }
+  return out;
+}

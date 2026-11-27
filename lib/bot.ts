@@ -29,6 +29,8 @@ export interface BotDeps {
   /** One Telegram attempt for a lead; true when accepted. */
   sendLead: (text: string) => Promise<boolean>;
   leadRetryDelaysMs?: number[];
+  /** Diagnosis hook: a reply could not be sent, or the AI failed (message is already redacted). */
+  onError?: (kind: "send" | "ai", message: string) => void;
   sleep?: (ms: number) => Promise<void>;
   log?: (msg: string) => void;
 }
@@ -80,6 +82,7 @@ export async function handleMessage(m: IncomingMessage, deps: BotDeps): Promise<
       return true;
     } catch (e) {
       log(`send failed: ${redact((e as Error).message)}`);
+      deps.onError?.("send", redact((e as Error).message));
       await deps.notify(`⚠️ Messenger бот хариулт илгээж чадсангүй.\nХэрэглэгч: ${m.psid}\nМессеж: ${preview}\nАлдаа: ${redact((e as Error).message)}`);
       return false;
     }
@@ -142,6 +145,7 @@ export async function handleMessage(m: IncomingMessage, deps: BotDeps): Promise<
   } catch (e) {
     const err = redact((e as Error).message).slice(0, 300);
     log(`AI failed: ${err}`);
+    deps.onError?.("ai", err);
     const sent = await send(phone ? FALLBACK_WITH_PHONE_REPLY : FALLBACK_REPLY);
     if (lead) await announce("", `AI алдаа гарсан (${err})`);
     else if (!phone) await deps.notify(`⚠️ AI хариулт гаргаж чадсангүй, ажилтан хариулна уу.\nМессеж: ${preview}\nАлдаа: ${err}`);

@@ -30,6 +30,11 @@ export function createRuntime(cfg: AppConfig = loadConfig()) {
     notify,
     sendLead,
     log,
+    onError: (kind, message) => {
+      void store
+        .track({ [`error_${kind}`]: 1 }, { last_error: `${kind}: ${message}`.slice(0, 240), last_error_at: new Date().toISOString() })
+        .catch(() => {});
+    },
   };
   return { cfg, graph, messenger, store, deps, notify, sendLead, log, knowledge, decide, claude };
 }
